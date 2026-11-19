@@ -48,13 +48,15 @@ cd oscars-2027-predictions
 npm install
 ```
 
-Create a local `src/tmdb.config.js` file:
+Create a local `.env` file or add `VITE_TMDB_ACCESS_TOKEN` in your deployment platform:
 
-```js
-export const TMDB_ACCESS_TOKEN = 'YOUR_TMDB_READ_ACCESS_TOKEN'
+```env
+VITE_TMDB_ACCESS_TOKEN=YOUR_TMDB_READ_ACCESS_TOKEN
 ```
 
-This file is ignored by Git and is the configured location for the local API token.
+On Netlify, add the variable under **Project configuration → Environment variables**.
+
+The shared `src/tmdb.config.js` file contains no token; it reads the value from Vite environment variables.
 
 ### Run
 
@@ -73,7 +75,7 @@ npm run preview
 
 ## Security
 
-Never commit `src/tmdb.config.js`. It is included in `.gitignore`, but client-side applications cannot keep API tokens completely private: the value is delivered to the browser. For a public production deployment, move TMDB requests behind a server-side proxy and store the token only on the server.
+Never commit `.env` or real TMDB credentials. Both `.env` and `.env.local` are ignored by Git. Client-side applications cannot keep API tokens completely private: the value is delivered to the browser. For stronger protection, move TMDB requests behind a server-side proxy and store the token only on the server.
 
 ## Recommended Repository Name
 

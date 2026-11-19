@@ -1,56 +1,97 @@
-# Oscar Predictions 2027
+# OSCARS 2027 — Predictions
 
-Aplicación frontend React + Vite para crear una quiniela personal de la 99.ª edición de los Premios Oscar. Incluye búsqueda TMDB, nominados ordenables, guardado local, resumen y exportación.
+<p align="center">
+  <img src="./media/oscars.png" alt="OSCARS 2027 logo" width="420">
+</p>
 
-## Requisitos
-- Node.js 20 o superior (recomendado)
+<p align="center">
+  <strong>An independent, mobile-first Oscar prediction ballot for the 99th Academy Awards.</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/DavidFerreiro-dev">GitHub</a>
+  ·
+  <a href="#features">Features</a>
+  ·
+  <a href="#getting-started">Getting Started</a>
+  ·
+  <a href="#credits">Credits</a>
+</p>
+
+---
+
+## Features
+
+- Build predictions across all 14 categories
+- Rank nominees from favorite to alternate
+- Search movies and people through TMDB
+- Automatically fill an actor's character name
+- Save predictions locally in the browser
+- Copy the complete ballot as text
+- Download the ballot as JPG or PNG
+- Export only Major categories or every category
+- Responsive desktop and mobile interface
+
+## Getting Started
+
+### Requirements
+
+- Node.js 20 or later
 - npm
-- Un TMDB API Read Access Token (v4)
+- A TMDB API Read Access Token (v4)
 
-## Instalación
+### Installation
 
 ```bash
-cd oscars-2027
+git clone https://github.com/DavidFerreiro-dev/oscars-2027-predictions.git
+cd oscars-2027-predictions
 npm install
-cp .env.example .env
 ```
 
-Abre `.env` y añade tu token:
+Create a local `src/tmdb.config.js` file:
 
-```env
-VITE_TMDB_ACCESS_TOKEN=TU_TOKEN_DE_LECTURA_TMDB
+```js
+export const TMDB_ACCESS_TOKEN = 'YOUR_TMDB_READ_ACCESS_TOKEN'
 ```
 
-Después inicia el servidor:
+This file is ignored by Git and is the configured location for the local API token.
+
+### Run
 
 ```bash
 npm run dev
 ```
 
-Vite mostrará una dirección local, normalmente `http://localhost:5173`.
+The app is available at `http://localhost:5173`.
 
-Para compilar y probar la versión de producción:
+### Build
 
 ```bash
 npm run build
 npm run preview
 ```
 
-## Oscar logo
-The hero uses the supplied image at `media/oscars.png`. The project is an independent fan experience and is not affiliated with the Academy.
+## Security
 
-## Uso
-- Cambia de categoría desde el menú lateral (en móvil, botón de menú).
-- Busca películas o personas en TMDB; los estrenos de 2026 aparecen priorizados entre los resultados de películas.
-- Añade candidatos y arrástralos para ordenar tu predicción. El primer puesto es la predicción a ganador.
-- La aplicación guarda automáticamente los cambios en `localStorage` del navegador.
-- En “Mi quiniela” puedes descargar el JSON o copiar un resumen de texto.
-- Si no has configurado el token en `.env`, puedes introducirlo desde Ajustes. Ese token se mantiene solo en el estado de la sesión actual.
+Never commit `src/tmdb.config.js`. It is included in `.gitignore`, but client-side applications cannot keep API tokens completely private: the value is delivered to the browser. For a public production deployment, move TMDB requests behind a server-side proxy and store the token only on the server.
 
-## Seguridad y atribución
-Las variables `VITE_*` se incorporan al bundle del navegador y no son secretos. Para desplegar públicamente, mueve las peticiones TMDB a un backend/proxy y guarda allí el token. No publiques tu `.env`.
+## Recommended Repository Name
 
-Este producto utiliza la API de TMDB, pero no está respaldado ni certificado por TMDB. Datos e imágenes sujetos a los términos de TMDB.
+**`oscars-2027-predictions`**
 
-## Alcance
-Se incluyen las 14 categorías especificadas en el encargo. En categorías de interpretación y dirección se puede buscar y añadir personas; puedes indicar la película por la que compite cada persona mediante el campo opcional de asociación de cada candidato.
+It clearly describes the application, release year and purpose.
+
+## Credits
+
+Made with love by [David Ferreiro](https://github.com/DavidFerreiro-dev).
+
+- Designed and developed by **David Ferreiro**
+- Movie and person data provided by [TMDB](https://www.themoviedb.org/)
+- This project is an independent fan project
+- Not affiliated with, endorsed by, or sponsored by the Academy of Motion Picture Arts and Sciences
+
+The OSCARS name and related marks belong to their respective owners. OSCARS and Academy Awards references are used only for identification and fan-content purposes.
+
+## License
+
+No license has been specified. All rights remain with the project author unless a license is added.

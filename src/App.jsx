@@ -10,8 +10,8 @@ const CATEGORIES = [
   { id:'actress', name:'Best Actress', group:'Major', limit:5, type:'person' },
   { id:'supporting-actor', name:'Best Supporting Actor', group:'Major', limit:5, type:'person' },
   { id:'supporting-actress', name:'Best Supporting Actress', group:'Major', limit:5, type:'person' },
-  { id:'original-screenplay', name:'Best Original Screenplay', group:'Crafts', limit:5, type:'movie' },
-  { id:'adapted-screenplay', name:'Best Adapted Screenplay', group:'Crafts', limit:5, type:'movie' },
+  { id:'original-screenplay', name:'Best Original Screenplay', group:'Crafts', limit:5, type:'person' },
+  { id:'adapted-screenplay', name:'Best Adapted Screenplay', group:'Crafts', limit:5, type:'person' },
   { id:'international', name:'Best International Feature', group:'Crafts', limit:5, type:'movie' },
   { id:'animation', name:'Best Animated Feature', group:'Crafts', limit:5, type:'movie' },
   { id:'cinematography', name:'Best Cinematography', group:'Crafts', limit:5, type:'movie' },
@@ -20,6 +20,8 @@ const CATEGORIES = [
   { id:'visual-effects', name:'Best Visual Effects', group:'Crafts', limit:5, type:'movie' },
 ]
 const blank = Object.fromEntries(CATEGORIES.map(c => [c.id, []]))
+const ACTING_CATEGORY_IDS = new Set(['actor','actress','supporting-actor','supporting-actress'])
+const PERSON_WITH_MOVIE_CATEGORY_IDS = new Set(['director','original-screenplay','adapted-screenplay'])
 const readToken = () => TMDB_ACCESS_TOKEN || ''
 
 function App(){
@@ -94,7 +96,35 @@ function App(){
     setPredictions(p=>({...p,[active]:p[active].map(x=>x.id===id?{...x,movie:movieLabel,role:''}:x)}))
     setMovieSearchFor(null)
     setMovieQuery('')
-    if(category.type==='person' && token){
+    if(active==='director'||active==='original-screenplay'||active==='adapted-screenplay'){
+      try{
+        const res=await fetch(`https://api.themoviedb.org/3/movie/${movie.id}/credits`,{headers:{Authorization:`Bearer ${token}`,accept:'application/json'}})
+        if(res.ok){
+          const data=await res.json()
+          const credits=active==='director'
+            ?(data.crew||[]).filter(person=>person.job==='Director')
+            :(data.crew||[]).filter(person=>['Writer','Screenplay','Screenwriter','Story'].includes(person.job))
+          setPredictions(p=>{
+            const current=p[active]||[]
+            const known=new Set(current.map(person=>person.id))
+            const additions=credits.filter(person=>!known.has(person.id)).slice(0,Math.max(0,CATEGORIES.find(c=>c.id===active).limit-current.length)).map(person=>({
+              id:person.id,
+              type:'person',
+              title:person.name,
+              year:'',
+              image:person.profile_path||null,
+              knownFor:'',
+              movie:movieLabel,
+              role:''
+            }))
+            return {...p,[active]:[...current,...additions]}
+          })
+        }
+      }catch{
+        // The manually selected person and movie remain saved.
+      }
+    }
+    if(ACTING_CATEGORY_IDS.has(active) && category.type==='person' && token){
       setRoleLoading(id)
       try{
         const params=new URLSearchParams({language:'en-US'})
@@ -181,9 +211,9 @@ function App(){
         <aside className={`sidebar ${mobileMenu?'sidebar-open':''}`}><div className="side-heading">MY PREDICTIONS <span>2027</span></div><button className={`nav-item ${tab==='categories'?'selected':''}`} onClick={()=>{setTab('categories');setMobileMenu(false)}}><Film size={17}/> Categories <span className="nav-count">14</span></button><button className={`nav-item ${tab==='summary'?'selected':''}`} onClick={()=>{setTab('summary');setMobileMenu(false)}}><Trophy size={17}/> My ballot <span className="nav-count">{filled}</span></button><div className="side-divider"/><div className="side-heading muted">CATEGORIES</div><div className="category-nav">{['Major','Crafts'].map(group=><div key={group}><div className="group-label">{group}</div>{CATEGORIES.filter(c=>c.group===group).map(c=><button key={c.id} className={`category-link ${active===c.id&&tab==='categories'?'active':''}`} onClick={()=>{setActive(c.id);setTab('categories');setMobileMenu(false)}}><span className="category-dot"/>{c.name}<span className="category-progress">{predictions[c.id]?.length||0}</span></button>)}</div>)}</div><div className="sidebar-footer"><div className="api-status"><span className={token?'status-dot on':'status-dot'}/>{token?'TMDB CONNECTED':'TMDB NOT CONFIGURED'}</div><span>MOVIE DATA · TMDB</span></div></aside>
         <section className="content-area">{tab==='categories'?<>
           <div className="section-top"><div><div className="eyebrow">{category.group.toUpperCase()}</div><h2>{category.name}</h2><p className="section-desc">Select up to {category.limit} nominees and rank them by your prediction.</p></div><div className="limit-pill">{predictions[active]?.length||0} <span>/ {category.limit}</span></div></div>
-          <div className="search-panel"><div className="search-title"><div className="search-icon"><Search size={18}/></div><div><b>Explore TMDB</b><span>{category.type==='movie'?'Search movies for this category':'Search actors or filmmakers'}</span></div></div><div className="search-box"><Search size={18}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder={category.type==='movie'?'Search a movie...':'Search a person...'} /><kbd>TMDB</kbd></div>
+          <div className="search-panel"><div className="search-title"><div className="search-icon"><Search size={18}/></div><div><b>Explore TMDB</b><span>{category.type==='movie'?'Search movies for this category':active==='director'?'Search directors':PERSON_WITH_MOVIE_CATEGORY_IDS.has(active)?'Search screenwriters':'Search actors or performers'}</span></div></div><div className="search-box"><Search size={18}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder={category.type==='movie'?'Search a movie...':'Search a person...'} /><kbd>TMDB</kbd></div>
             {query.trim().length>=2&&<div className="search-results">{loading?<div className="search-message">Searching The Movie Database...</div>:error?<div className="search-message error">{error}</div>:results.length?results.map(item=>{const isMovie=category.type==='movie';const title=isMovie?(item.title||item.original_title):(item.name||item.original_name);const img=isMovie?item.poster_path:item.profile_path;const exists=predictions[active].some(x=>x.id===item.id);return <div className="result-row" key={item.id}><div className="result-image">{img?<img src={IMAGE+'w92'+img} alt=""/>:<Film size={18}/>}</div><div className="result-info"><b>{title}</b><span>{isMovie?(item.release_date||'').slice(0,4):((item.known_for||[]).map(x=>x.title||x.name).slice(0,2).join(' · ')||'Film professional')}</span></div><button className="add-result" disabled={exists||predictions[active].length>=category.limit} onClick={()=>add(item)}>{exists?<Check size={16}/>:<Plus size={16}/>}<span>{exists?'Added':'Add'}</span></button></div>}):<div className="search-message">No results found.</div>}</div>}
-            <div className="search-hint">{category.type==='movie'?'Results are prioritized by 2026 releases.':'After adding a person, search TMDB for their nominated movie and role.'}</div>
+            <div className="search-hint">{category.type==='movie'?'Results are prioritized by 2026 releases.':active==='director'?'After adding a director, search TMDB for the film they directed.':PERSON_WITH_MOVIE_CATEGORY_IDS.has(active)?'After adding a screenwriter, search TMDB for the film they wrote.':'After adding a person, search TMDB for their nominated movie and role.'}</div>
           </div>
           <div className="nominees-header"><div><h3>YOUR NOMINEES</h3><span>Drag to change prediction order</span></div><span className="sort-label"><GripVertical size={14}/> FAVORITE ORDER</span></div>
           <div className="nominee-list">
@@ -218,14 +248,16 @@ function App(){
                         onClick={()=>{setMovieSearchFor(movieSearchFor===item.id?null:item.id);setMovieQuery(item.movie||'')}}
                       >
                         <Film size={13}/>
-                        {item.movie?`In ${item.movie}`:'Search nominated movie'}
+                        {item.movie?`In ${item.movie}`:active==='director'?'Search directed movie':PERSON_WITH_MOVIE_CATEGORY_IDS.has(active)?'Search written movie':'Search nominated movie'}
                       </button>
-                      <input
-                        className="associated-movie"
-                        value={item.role||''}
-                        onChange={e=>setRole(item.id,e.target.value)}
-                        placeholder={roleLoading===item.id?'Loading character...':'Character name (optional)'}
-                      />
+                      {ACTING_CATEGORY_IDS.has(active) && (
+                        <input
+                          className="associated-movie"
+                          value={item.role||''}
+                          onChange={e=>setRole(item.id,e.target.value)}
+                          placeholder={roleLoading===item.id?'Loading character...':'Character name (optional)'}
+                        />
+                      )}
                       {movieSearchFor===item.id && (
                         <div className="movie-search">
                           <div className="search-box compact">

@@ -96,4 +96,4 @@ The OSCARS name and related marks belong to their respective owners. OSCARS and 
 
 ## License
 
-No license has been specified. All rights remain with the project author unless a license is added.
+This project is licensed under the [MIT License](./LICENSE).

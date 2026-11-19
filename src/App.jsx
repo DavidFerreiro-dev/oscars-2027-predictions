@@ -22,6 +22,17 @@ const CATEGORIES = [
 const blank = Object.fromEntries(CATEGORIES.map(c => [c.id, []]))
 const ACTING_CATEGORY_IDS = new Set(['actor','actress','supporting-actor','supporting-actress'])
 const PERSON_WITH_MOVIE_CATEGORY_IDS = new Set(['director'])
+const CRAFT_CREDIT_JOBS = {
+  'original-screenplay': ['Writer','Screenplay','Screenwriter','Story'],
+  'adapted-screenplay': ['Writer','Screenplay','Screenwriter','Story'],
+  cinematography: ['Director of Photography','Director of Photography (DOP)'],
+  score: ['Original Music Composer','Composer','Music'],
+  'production-design': ['Production Designer','Art Director','Art Direction'],
+  'animation': ['Animation Director','Animation Supervisor','Director'],
+  'visual-effects': ['Visual Effects Supervisor','Special Effects Supervisor','Visual Effects'],
+  international: [],
+  picture: []
+}
 const readToken = () => TMDB_ACCESS_TOKEN || ''
 
 function App(){
@@ -82,10 +93,47 @@ function App(){
     return ()=>clearTimeout(timer)
   },[movieQuery,movieSearchFor,token])
 
-  const add = item => {
+  const add = async item => {
     const isMovie=category.type==='movie'
-    const entry={id:item.id,type:category.type,title:isMovie?(item.title||item.original_title):(item.name||item.original_name),year:isMovie?(item.release_date||'').slice(0,4):'',image:isMovie?item.poster_path:item.profile_path,knownFor:!isMovie?(item.known_for||[]).slice(0,2).map(x=>x.title||x.name).join(', '):'',movie:null,role:''}
-    setPredictions(prev=>({...prev,[active]:[...(prev[active]||[]),entry]}));setQuery('');setResults([])
+    const title=isMovie?(item.title||item.original_title):(item.name||item.original_name)
+    const year=isMovie?(item.release_date||'').slice(0,4):''
+    setQuery('')
+    setResults([])
+    if(isMovie && CRAFT_CREDIT_JOBS[active]?.length && token){
+      setLoading(true)
+      try{
+        const res=await fetch(`https://api.themoviedb.org/3/movie/${item.id}/credits`,{headers:{Authorization:`Bearer ${token}`,accept:'application/json'}})
+        if(res.ok){
+          const data=await res.json()
+          const jobs=CRAFT_CREDIT_JOBS[active]
+          const credits=(data.crew||[]).filter(person=>jobs.includes(person.job))
+          const movieLabel=year?`${title} (${year})`:title
+          setPredictions(prev=>{
+            const existing=prev[active]||[]
+            const existingIds=new Set(existing.map(person=>person.id))
+            const people=credits.filter(person=>!existingIds.has(person.id)).slice(0,category.limit-existing.length).map(person=>({
+              id:person.id,
+              type:'person',
+              title:person.name,
+              year:'',
+              image:person.profile_path||null,
+              knownFor:person.job||'',
+              movie:movieLabel,
+              role:''
+            }))
+            if(people.length>0)return {...prev,[active]:[...existing,...people]}
+            return {...prev,[active]:[...existing,{id:item.id,type:'movie',title,year,image:item.poster_path,knownFor:'',movie:null,role:''}]}
+          })
+          return
+        }
+      }catch{
+        // Fall through to a movie nominee if credits cannot be loaded.
+      }finally{
+        setLoading(false)
+      }
+    }
+    const entry={id:item.id,type:category.type,title,year,image:isMovie?item.poster_path:item.profile_path,knownFor:!isMovie?(item.known_for||[]).slice(0,2).map(x=>x.title||x.name).join(', '):'',movie:null,role:''}
+    setPredictions(prev=>({...prev,[active]:[...(prev[active]||[]),entry]}))
   }
   const remove=(id)=>setPredictions(p=>({...p,[active]:p[active].filter(x=>x.id!==id)}))
   const setAssociatedMovie=(id,movie)=>setPredictions(p=>({...p,[active]:p[active].map(x=>x.id===id?{...x,movie}:x)}))
@@ -101,9 +149,9 @@ function App(){
         const res=await fetch(`https://api.themoviedb.org/3/movie/${movie.id}/credits`,{headers:{Authorization:`Bearer ${token}`,accept:'application/json'}})
         if(res.ok){
           const data=await res.json()
-          const credits=active==='director'
-            ?(data.crew||[]).filter(person=>person.job==='Director')
-            :(data.crew||[]).filter(person=>['Writer','Screenplay','Screenwriter','Story'].includes(person.job))
+          const credits=(data.crew||[])
+            .filter(person=>person.job==='Director')
+            .filter((person,index,people)=>people.findIndex(candidate=>candidate.id===person.id)===index)
           setPredictions(p=>{
             const current=p[active]||[]
             const known=new Set(current.map(person=>person.id))
@@ -113,7 +161,7 @@ function App(){
               title:person.name,
               year:'',
               image:person.profile_path||null,
-              knownFor:'',
+              knownFor:'Director',
               movie:movieLabel,
               role:''
             }))
@@ -213,7 +261,7 @@ function App(){
           <div className="section-top"><div><div className="eyebrow">{category.group.toUpperCase()}</div><h2>{category.name}</h2><p className="section-desc">Select up to {category.limit} nominees and rank them by your prediction.</p></div><div className="limit-pill">{predictions[active]?.length||0} <span>/ {category.limit}</span></div></div>
           <div className="search-panel"><div className="search-title"><div className="search-icon"><Search size={18}/></div><div><b>Explore TMDB</b><span>{category.type==='movie'?'Search movies for this category':active==='director'?'Search directors':'Search actors or performers'}</span></div></div><div className="search-box"><Search size={18}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder={category.type==='movie'?'Search a movie...':'Search a person...'} /><kbd>TMDB</kbd></div>
             {query.trim().length>=2&&<div className="search-results">{loading?<div className="search-message">Searching The Movie Database...</div>:error?<div className="search-message error">{error}</div>:results.length?results.map(item=>{const isMovie=category.type==='movie';const title=isMovie?(item.title||item.original_title):(item.name||item.original_name);const img=isMovie?item.poster_path:item.profile_path;const exists=predictions[active].some(x=>x.id===item.id);return <div className="result-row" key={item.id}><div className="result-image">{img?<img src={IMAGE+'w92'+img} alt=""/>:<Film size={18}/>}</div><div className="result-info"><b>{title}</b><span>{isMovie?(item.release_date||'').slice(0,4):((item.known_for||[]).map(x=>x.title||x.name).slice(0,2).join(' · ')||'Film professional')}</span></div><button className="add-result" disabled={exists||predictions[active].length>=category.limit} onClick={()=>add(item)}>{exists?<Check size={16}/>:<Plus size={16}/>}<span>{exists?'Added':'Add'}</span></button></div>}):<div className="search-message">No results found.</div>}</div>}
-            <div className="search-hint">{category.type==='movie'?'Search the nominated movie for this category.':active==='director'?'Search a director, then select the film they directed.':'After adding a person, search TMDB for their nominated movie and role.'}</div>
+            <div className="search-hint">{category.type==='movie'?'Search the nominated movie for this category.':active==='director'?'Search a director, then select the film: all credited directors are added automatically.':'After adding a person, search TMDB for their nominated movie and role.'}</div>
           </div>
           <div className="nominees-header"><div><h3>YOUR NOMINEES</h3><span>Drag to change prediction order</span></div><span className="sort-label"><GripVertical size={14}/> FAVORITE ORDER</span></div>
           <div className="nominee-list">
@@ -241,7 +289,7 @@ function App(){
                 <div className="nominee-details">
                   <b>{item.title}</b>
                   <span>{item.year||item.knownFor||'No additional information'}</span>
-                  {item.type==='person' && (
+                  {item.type==='person' && (ACTING_CATEGORY_IDS.has(active)||active==='director') && (
                     <div className="person-selection">
                       <button
                         className="movie-picker"

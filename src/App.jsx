@@ -23,8 +23,8 @@ const blank = Object.fromEntries(CATEGORIES.map(c => [c.id, []]))
 const ACTING_CATEGORY_IDS = new Set(['actor','actress','supporting-actor','supporting-actress'])
 const PERSON_WITH_MOVIE_CATEGORY_IDS = new Set(['director'])
 const CRAFT_CREDIT_JOBS = {
-  'original-screenplay': ['Writer','Screenplay','Screenwriter','Story'],
-  'adapted-screenplay': ['Writer','Screenplay','Screenwriter','Story'],
+  'original-screenplay': ['Writer','Screenplay','Screenwriter','Story','Characters','Original Story','Novel'],
+  'adapted-screenplay': ['Writer','Screenplay','Screenwriter','Story','Characters','Original Story','Novel'],
   cinematography: ['Director of Photography','Director of Photography (DOP)'],
   score: ['Original Music Composer','Composer','Music'],
   'production-design': ['Production Designer','Art Director','Art Direction'],
@@ -288,7 +288,7 @@ function App(){
                 </div>
                 <div className="nominee-details">
                   <b>{item.title}</b>
-                  <span>{item.year||item.knownFor||'No additional information'}</span>
+                  <span>{item.type==='person'&&item.movie?`In ${item.movie}${item.knownFor?` · ${item.knownFor}`:''}`:item.year||item.knownFor||'No additional information'}</span>
                   {item.type==='person' && (ACTING_CATEGORY_IDS.has(active)||active==='director') && (
                     <div className="person-selection">
                       <button

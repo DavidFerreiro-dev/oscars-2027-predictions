@@ -36,6 +36,26 @@ const CRAFT_CREDIT_JOBS = {
 const readToken = () => TMDB_ACCESS_TOKEN || ''
 const normalizeSavedPredictions = saved => {
   const next = {...blank,...saved}
+  if(next.director){
+    const grouped = new Map()
+    const standalone = []
+    ;(next.director||[]).forEach(entry=>{
+      if(!entry.movie){standalone.push(entry);return}
+      const existing=grouped.get(entry.movie)
+      if(existing){
+        const directors=new Map(existing.directors?.map(director=>[director.id,director])||[])
+        ;(entry.directors||[{id:entry.id,name:entry.title,profile_path:entry.image}]).forEach(director=>{
+          if(director?.id)directors.set(director.id,director)
+        })
+        existing.directors=[...directors.values()]
+        existing.knownFor=existing.directors.map(director=>director.name).join(', ')
+        return
+      }
+      const directors=entry.directors||[{id:entry.id,name:entry.title,profile_path:entry.image}]
+      grouped.set(entry.movie,{...entry,id:entry.movieId||entry.id,type:'movie',title:entry.movieName||entry.movie.replace(/\s\(\d{4}\)$/,''),year:entry.movie.match(/\((\d{4})\)$/)?.[1]||entry.year||'',image:entry.movieImage||entry.image||null,movie:entry.movie,knownFor:directors.map(director=>director.name).join(', '),directors})
+    })
+    next.director=[...standalone,...grouped.values()].slice(0,CATEGORIES.find(c=>c.id==='director').limit)
+  }
   ;['original-screenplay','adapted-screenplay'].forEach(id=>{
     const grouped = new Map()
     const standalone = []
@@ -47,7 +67,7 @@ const normalizeSavedPredictions = saved => {
         return
       }
       const match=entry.movie.match(/^(.*) \((\d{4})\)$/)
-      grouped.set(entry.movie,{...entry,type:'movie',title:match?match[1]:entry.movie,year:match?match[2]:'',image:entry.movieImage||null,creditImage:entry.image||null,movie:null,knownFor:entry.title||entry.knownFor||''})
+      grouped.set(entry.movie,{...entry,type:'movie',title:match?match[1]:entry.movie,year:match?match[2]:'',image:entry.movieImage||null,creditImage:entry.creditImage||entry.image||null,movie:null,knownFor:entry.title||entry.knownFor||''})
     })
     next[id]=[...standalone,...grouped.values()].slice(0,CATEGORIES.find(c=>c.id===id).limit)
   })
@@ -84,7 +104,7 @@ function App(){
       setLoading(true);setError('')
       try{
         if(!token) throw new Error('TMDB token is not configured in the .env file.')
-        const endpoint=category.type==='movie'?'search/movie':'search/person'
+        const endpoint=(category.type==='movie'||active==='director')?'search/movie':'search/person'
         const params=new URLSearchParams({query:query.trim(),include_adult:'false',language:'en-US',page:'1'})
         const res=await fetch(`https://api.themoviedb.org/3/${endpoint}?${params}`,{headers:{Authorization:`Bearer ${token}`,accept:'application/json'}})
         if(!res.ok) throw new Error(res.status===401?'Invalid token. Check your TMDB credentials.':`TMDB returned error ${res.status}.`)
@@ -119,6 +139,50 @@ function App(){
     const year=isMovie?(item.release_date||'').slice(0,4):''
     setQuery('')
     setResults([])
+    if(active==='director' && token){
+      setLoading(true)
+      try{
+        const res=await fetch(`https://api.themoviedb.org/3/movie/${item.id}/credits`,{headers:{Authorization:`Bearer ${token}`,accept:'application/json'}})
+        if(res.ok){
+          const data=await res.json()
+          const directors=(data.crew||[])
+            .filter(person=>person.job==='Director')
+            .filter((person,index,people)=>people.findIndex(candidate=>candidate.id===person.id)===index)
+            .map(person=>({id:person.id,name:person.name,profile_path:person.profile_path||null}))
+          const movieLabel=year?`${title} (${year})`:title
+          setPredictions(prev=>{
+            const existing=prev[active]||[]
+            if(existing.some(entry=>entry.movieId===item.id||entry.id===item.id)||existing.length>=category.limit)return prev
+            return {...prev,[active]:[...existing,{
+              id:item.id,
+              movieId:item.id,
+              type:'movie',
+              title,
+              movieName:title,
+              year,
+              image:item.poster_path||null,
+              movieImage:item.poster_path||null,
+              movie:movieLabel,
+              knownFor:directors.map(director=>director.name).join(', '),
+              directors,
+              role:''
+            }]}
+          })
+          return
+        }
+      }catch{
+        // Fall through to a basic movie nominee if credits cannot be loaded.
+      }finally{
+        setLoading(false)
+      }
+      const movieLabel=year?`${title} (${year})`:title
+      setPredictions(prev=>{
+        const existing=prev[active]||[]
+        if(existing.some(entry=>entry.movieId===item.id||entry.id===item.id)||existing.length>=category.limit)return prev
+        return {...prev,[active]:[...existing,{id:item.id,movieId:item.id,type:'movie',title,movieName:title,year,image:item.poster_path||null,movieImage:item.poster_path||null,movie:movieLabel,knownFor:'Director',directors:[],role:''}]}
+      })
+      return
+    }
     if(isMovie && (CRAFT_CREDIT_JOBS[active]?.length || active==='picture') && token){
       setLoading(true)
       try{
@@ -140,6 +204,11 @@ function App(){
             const primaryWriter=active==='original-screenplay'||active==='adapted-screenplay'
               ? credits.find(person=>['Writer','Screenplay','Screenwriter'].includes(person.job))
               : null
+            const composers=active==='score'
+              ? credits
+                .filter((person,index,people)=>person.name&&people.findIndex(candidate=>candidate.id===person.id)===index)
+                .map(person=>({id:person.id,name:person.name,profile_path:person.profile_path||null}))
+              : []
             const peopleByJob=(allowedJobs)=>credits
               .filter(person=>allowedJobs.includes(person.job))
               .map(person=>person.name)
@@ -152,7 +221,18 @@ function App(){
                 peopleByJob(['Director'])&&`Dirección: ${peopleByJob(['Director'])}`
               ].filter(Boolean).join(' · ')
               : ''
-            return {...prev,[active]:[...existing,{id:item.id,type:'movie',title,year,image:item.poster_path,creditImage:primaryWriter?.profile_path||null,knownFor:contributors,subtitle,movie:null,role:''}]}
+            return {...prev,[active]:[...existing,{
+              id:item.id,
+              type:'movie',
+              title,
+              year,
+              image:item.poster_path,
+              movieImage:item.poster_path,
+              creditImage:active==='score'?composers[0]?.profile_path||null:primaryWriter?.profile_path||null,
+              knownFor:active==='score'?composers.map(composer=>composer.name).join(', '):contributors,
+              composers,
+              subtitle,movie:null,role:''
+            }]}
           })
           return
         }
@@ -182,25 +262,42 @@ function App(){
           const credits=(data.crew||[])
             .filter(person=>person.job==='Director')
             .filter((person,index,people)=>people.findIndex(candidate=>candidate.id===person.id)===index)
+          const directors=credits.map(person=>({id:person.id,name:person.name,profile_path:person.profile_path||null}))
           setPredictions(p=>{
             const current=p[active]||[]
-            const known=new Set(current.map(person=>person.id))
-            const additions=credits.filter(person=>!known.has(person.id)).slice(0,Math.max(0,CATEGORIES.find(c=>c.id===active).limit-current.length)).map(person=>({
-              id:person.id,
-              type:'person',
-              title:person.name,
-              year:'',
-              image:person.profile_path||null,
+            const replaced=current.map(entry=>entry.id===id?{
+              id:movie.id,
+              movieId:movie.id,
+              type:'movie',
+              title,
+              movieName:title,
+              year,
+              image:movie.poster_path||null,
               movieImage:movie.poster_path||null,
-              knownFor:'Director',
               movie:movieLabel,
+              knownFor:directors.map(director=>director.name).join(', '),
+              directors,
               role:''
-            }))
-            return {...p,[active]:[...current,...additions]}
+            }:entry)
+              .filter((entry,index,entries)=>entry.movieId!==movie.id||entries.findIndex(candidate=>candidate.movieId===movie.id)===index)
+            return {...p,[active]:replaced.slice(0,CATEGORIES.find(c=>c.id===active).limit)}
           })
         }
       }catch{
-        // The manually selected person and movie remain saved.
+        setPredictions(p=>({...p,[active]:p[active].map(entry=>entry.id===id?{
+          id:movie.id,
+          movieId:movie.id,
+          type:'movie',
+          title,
+          movieName:title,
+          year,
+          image:movie.poster_path||null,
+          movieImage:movie.poster_path||null,
+          movie:movieLabel,
+          knownFor:'Director',
+          directors:[],
+          role:''
+        }:entry)}))
       }
     }
     if(ACTING_CATEGORY_IDS.has(active) && category.type==='person' && token){
@@ -241,7 +338,12 @@ function App(){
     const selected=CATEGORIES.filter(c=>!mainOnly||c.group==='Major')
     const rowHeight=104
     const winners=selected.map(c=>predictions[c.id]?.[0]||null)
-    const posters=await Promise.all(winners.map(winner=>loadPoster(winner?.movieImage||winner?.image)))
+    const posters=await Promise.all(winners.map((winner,index)=>{
+      const category=selected[index]
+      const isScreenplay=category?.id==='original-screenplay'||category?.id==='adapted-screenplay'
+      const isScore=category?.id==='score'
+      return loadPoster(isScreenplay||isScore?(winner?.creditImage||winner?.movieImage||winner?.image):(winner?.movieImage||winner?.image))
+    }))
     const height=230+(selected.length*rowHeight)
     canvas.width=width
     canvas.height=height
@@ -272,7 +374,7 @@ function App(){
       ctx.fillStyle=winner?'#f4efe5':'#777064'
       ctx.font=winner?'600 22px Georgia':'18px Arial'
       ctx.textAlign='right'
-      const detail=winner?(winner.subtitle|| (winner.movie&&winner.role?`${winner.title} — ${winner.movie}, as ${winner.role}`:winner.movie?`${winner.title} — ${winner.movie}`:winner.knownFor?`${winner.title} — ${winner.knownFor}`:winner.title+(winner.year?` (${winner.year})`:''))):'No prediction'
+      const detail=winner?(c.id==='director'&&winner.directors?.length?`${winner.title} — ${winner.directors.map(director=>director.name).join(', ')}`:c.id==='score'&&winner.composers?.length?`${winner.title} — ${winner.composers.map(composer=>composer.name).join(', ')}`:winner.subtitle||(winner.movie&&winner.role?`${winner.title} — ${winner.movie}, as ${winner.role}`:winner.movie?`${winner.title} — ${winner.movie}`:winner.knownFor?`${winner.title} — ${winner.knownFor}`:winner.title+(winner.year?` (${winner.year})`:''))):'No prediction'
       ctx.fillText(detail,width-95,y+61)
       ctx.textAlign='left'
     })
@@ -286,7 +388,7 @@ function App(){
     link.click()
     setExporting(false)
   }
-  const summary=useMemo(()=>CATEGORIES.map(c=>{const winner=predictions[c.id]?.[0];const detail=winner?(winner.movie&&winner.role?`${winner.title} — ${winner.movie}, as ${winner.role}`:winner.movie?`${winner.title} — ${winner.movie}`:winner.role?`${winner.title} — as ${winner.role}`:winner.title+(winner.year?` (${winner.year})`:'')):'—';return `${c.name}: ${detail}`}).join('\n'),[predictions])
+  const summary=useMemo(()=>CATEGORIES.map(c=>{const winner=predictions[c.id]?.[0];const detail=winner?(c.id==='director'&&winner.directors?.length?`${winner.title} — ${winner.directors.map(director=>director.name).join(', ')}`:c.id==='score'&&winner.composers?.length?`${winner.title} — ${winner.composers.map(composer=>composer.name).join(', ')}`:winner.movie&&winner.role?`${winner.title} — ${winner.movie}, as ${winner.role}`:winner.movie?`${winner.title} — ${winner.movie}`:winner.role?`${winner.title} — as ${winner.role}`:winner.title+(winner.year?` (${winner.year})`:'')):'—';return `${c.name}: ${detail}`}).join('\n'),[predictions])
   const copySummary=async()=>{await navigator.clipboard.writeText(`MY PREDICTIONS · OSCARS 2027\n\n${summary}`);alert('Summary copied to the clipboard.')}
 
   return <div className="app-shell">
@@ -306,9 +408,9 @@ function App(){
         <aside className={`sidebar ${mobileMenu?'sidebar-open':''}`}><div className="side-heading">MY PREDICTIONS <span>2027</span></div><button className={`nav-item ${tab==='categories'?'selected':''}`} onClick={()=>{setTab('categories');setMobileMenu(false)}}><Film size={17}/> Categories <span className="nav-count">14</span></button><button className={`nav-item ${tab==='summary'?'selected':''}`} onClick={()=>{setTab('summary');setMobileMenu(false)}}><Trophy size={17}/> My ballot <span className="nav-count">{filled}</span></button><div className="side-divider"/><div className="side-heading muted">CATEGORIES</div><div className="category-nav">{['Major','Crafts'].map(group=><div key={group}><div className="group-label">{group}</div>{CATEGORIES.filter(c=>c.group===group).map(c=><button key={c.id} className={`category-link ${active===c.id&&tab==='categories'?'active':''}`} onClick={()=>{setActive(c.id);setTab('categories');setMobileMenu(false)}}><span className="category-dot"/>{c.name}<span className="category-progress">{predictions[c.id]?.length||0}</span></button>)}</div>)}</div><div className="sidebar-footer"><div className="api-status"><span className={token?'status-dot on':'status-dot'}/>{token?'TMDB CONNECTED':'TMDB NOT CONFIGURED'}</div><span>MOVIE DATA · TMDB</span></div></aside>
         <section className="content-area">{tab==='categories'?<>
           <div className="section-top"><div><div className="eyebrow">{category.group.toUpperCase()}</div><h2>{category.name}</h2><p className="section-desc">Select up to {category.limit} nominees and rank them by your prediction.</p></div><div className="limit-pill">{predictions[active]?.length||0} <span>/ {category.limit}</span></div></div>
-          <div className="search-panel"><div className="search-title"><div className="search-icon"><Search size={18}/></div><div><b>Explore TMDB</b><span>{category.type==='movie'?'Search movies for this category':active==='director'?'Search directors':'Search actors or performers'}</span></div></div><div className="search-box"><Search size={18}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder={category.type==='movie'?'Search a movie...':'Search a person...'} /><kbd>TMDB</kbd></div>
-            {query.trim().length>=2&&<div className="search-results">{loading?<div className="search-message">Searching The Movie Database...</div>:error?<div className="search-message error">{error}</div>:results.length?results.map(item=>{const isMovie=category.type==='movie';const title=isMovie?(item.title||item.original_title):(item.name||item.original_name);const img=isMovie?item.poster_path:item.profile_path;const exists=predictions[active].some(x=>x.id===item.id);return <div className="result-row" key={item.id}><div className="result-image">{img?<img src={IMAGE+'w92'+img} alt=""/>:<Film size={18}/>}</div><div className="result-info"><b>{title}</b><span>{isMovie?(item.release_date||'').slice(0,4):((item.known_for||[]).map(x=>x.title||x.name).slice(0,2).join(' · ')||'Film professional')}</span></div><button className="add-result" disabled={exists||predictions[active].length>=category.limit} onClick={()=>add(item)}>{exists?<Check size={16}/>:<Plus size={16}/>}<span>{exists?'Added':'Add'}</span></button></div>}):<div className="search-message">No results found.</div>}</div>}
-            <div className="search-hint">{category.type==='movie'?'Search the nominated movie for this category.':active==='director'?'Search a director, then select the film: all credited directors are added automatically.':'After adding a person, search TMDB for their nominated movie and role.'}</div>
+          <div className="search-panel"><div className="search-title"><div className="search-icon"><Search size={18}/></div><div><b>Explore TMDB</b><span>{active==='director'?'Search a movie to add all credited directors':category.type==='movie'?'Search movies for this category':'Search actors or performers'}</span></div></div><div className="search-box"><Search size={18}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder={active==='director'||category.type==='movie'?'Search a movie...':'Search a person...'} /><kbd>TMDB</kbd></div>
+            {query.trim().length>=2&&<div className="search-results">{loading?<div className="search-message">Searching The Movie Database...</div>:error?<div className="search-message error">{error}</div>:results.length?results.map(item=>{const isMovie=category.type==='movie'||active==='director';const title=isMovie?(item.title||item.original_title):(item.name||item.original_name);const img=isMovie?item.poster_path:item.profile_path;const exists=predictions[active].some(x=>x.movieId===item.id||x.id===item.id);return <div className="result-row" key={item.id}><div className="result-image">{img?<img src={IMAGE+'w92'+img} alt=""/>:<Film size={18}/>}</div><div className="result-info"><b>{title}</b><span>{isMovie?(item.release_date||'').slice(0,4):((item.known_for||[]).map(x=>x.title||x.name).slice(0,2).join(' · ')||'Film professional')}</span></div><button className="add-result" disabled={exists||predictions[active].length>=category.limit} onClick={()=>add(item)}>{exists?<Check size={16}/>:<Plus size={16}/>}<span>{exists?'Added':'Add'}</span></button></div>}):<div className="search-message">No results found.</div>}</div>}
+            <div className="search-hint">{active==='director'?'Search a movie: Project Hail Mary will show both directors together in the same nominee card.':category.type==='movie'?'Search the nominated movie for this category.':'After adding a person, search TMDB for their nominated movie and role.'}</div>
           </div>
           <div className="nominees-header"><div><h3>YOUR NOMINEES</h3><span>Drag to change prediction order</span></div><span className="sort-label"><GripVertical size={14}/> FAVORITE ORDER</span></div>
           <div className="nominee-list">
@@ -332,13 +434,31 @@ function App(){
                 <div className="rank">{String(index+1).padStart(2,'0')}</div>
                 <div className="nominee-media">
                 <div className="nominee-poster">
-                  {(item.type==='person'&&item.movieImage)||item.image?<img src={IMAGE+'w185'+((item.type==='person'&&item.movieImage)||item.image)} alt=""/>:<div className="poster-placeholder"><Film size={22}/></div>}
+                  {((active==='original-screenplay'||active==='adapted-screenplay'||active==='score')&&item.creditImage)
+                    ?<img src={IMAGE+'w185'+item.creditImage} alt={item.knownFor||item.title}/>
+                    :((item.type==='person'&&item.movieImage)||item.image?<img src={IMAGE+'w185'+((item.type==='person'&&item.movieImage)||item.image)} alt=""/>:<div className="poster-placeholder"><Film size={22}/></div>)}
                 </div>
-                {((item.type==='person'&&item.movieImage&&item.image)||item.creditImage)&&<div className="person-thumb"><img src={IMAGE+'w92'+(item.type==='person'&&item.movieImage?item.image:item.creditImage)} alt=""/></div>}
+                {(active==='original-screenplay'||active==='adapted-screenplay'||active==='score')&&item.creditImage
+                  ?<div className="person-thumb"><img src={IMAGE+'w92'+item.creditImage} alt={item.knownFor||item.title}/></div>
+                  :(((item.type==='person'&&item.movieImage&&item.image)||item.creditImage)&&<div className="person-thumb"><img src={IMAGE+'w92'+(item.type==='person'&&item.movieImage?item.image:item.creditImage)} alt=""/></div>)}
                 </div>
                 <div className="nominee-details">
                   <b>{item.title}</b>
-                <span>{item.subtitle|| (item.type==='person'&&item.movie?`In ${item.movie}${item.knownFor?` · ${item.knownFor}`:''}`:item.knownFor?`${item.year?`${item.year} · `:''}${item.knownFor}`:(item.year||'No additional information'))}</span>
+                  {active==='director'&&item.directors?.length?(
+                    <div className="director-list">
+                      {item.directors.map(director=><div className="director-chip" key={director.id}>
+                        {director.profile_path?<img src={IMAGE+'w92'+director.profile_path} alt={director.name}/>:<div className="director-avatar"><Film size={12}/></div>}
+                        <span>{director.name}</span>
+                      </div>)}
+                    </div>
+                  ):active==='score'&&item.composers?.length?(
+                    <div className="director-list">
+                      {item.composers.map(composer=><div className="director-chip" key={composer.id}>
+                        {composer.profile_path?<img src={IMAGE+'w92'+composer.profile_path} alt={composer.name}/>:<div className="director-avatar"><Film size={12}/></div>}
+                        <span>{composer.name}</span>
+                      </div>)}
+                    </div>
+                  ):<span>{item.subtitle|| (item.type==='person'&&item.movie?`In ${item.movie}${item.knownFor?` · ${item.knownFor}`:''}`:item.knownFor?`${item.year?`${item.year} · `:''}${item.knownFor}`:(item.year||'No additional information'))}</span>}
                   {item.type==='person' && (ACTING_CATEGORY_IDS.has(active)||active==='director') && (
                     <div className="person-selection">
                       <button
@@ -394,7 +514,7 @@ function App(){
         </>:<>
           <div className="section-top summary-top"><div><div className="eyebrow">YOUR OSCAR NIGHT</div><h2>My predictions <em>2027</em></h2><p className="section-desc">Your picks for the 99th Academy Awards.</p></div><div className="limit-pill">{filled} <span>/ 14</span></div></div>
           <div className="export-options"><label className="category-toggle"><input type="checkbox" checked={mainOnly} onChange={e=>setMainOnly(e.target.checked)}/><span>Major categories only</span></label><div className="summary-actions"><button className="gold-button" disabled={exporting} onClick={()=>exportImage('jpg')}><Download size={16}/> {exporting?'Preparing...':'Download JPG'}</button><button className="outline-button" disabled={exporting} onClick={()=>exportImage('png')}><Download size={16}/> Download PNG</button><button className="outline-button" onClick={copySummary}><Copy size={16}/> Copy list</button></div></div>
-          <div className="summary-grid">{CATEGORIES.filter(c=>!mainOnly||c.group==='Major').map(c=>{const winner=predictions[c.id]?.[0];const nomineeLabel=winner?(winner.subtitle||(winner.movie&&winner.role?`In ${winner.movie} as ${winner.role}`:winner.movie?`In ${winner.movie}`:winner.role?`as ${winner.role}`:winner.knownFor||winner.year||'Winner prediction')):'No prediction yet';return <div className="summary-card" key={c.id}><div className="summary-card-top"><span>{c.group.toUpperCase()}</span><span>{winner?'01':'—'}</span></div><b>{c.name}</b><div className="summary-winner">{winner?<><div className="mini-image">{winner.movieImage||winner.image?<img src={IMAGE+'w92'+(winner.movieImage||winner.image)} alt=""/>:<Film size={16}/>}</div><div><strong>{winner.title}</strong><small>{nomineeLabel}</small></div><Trophy className="mini-trophy" size={16}/></>:<span className="not-selected">No prediction yet</span>}</div></div>})}</div>
+          <div className="summary-grid">{CATEGORIES.filter(c=>!mainOnly||c.group==='Major').map(c=>{const winner=predictions[c.id]?.[0];const nomineeLabel=winner?(winner.subtitle||(winner.movie&&winner.role?`In ${winner.movie} as ${winner.role}`:winner.movie?`In ${winner.movie}`:winner.role?`as ${winner.role}`:winner.knownFor||winner.year||'Winner prediction')):'No prediction yet';return <div className="summary-card" key={c.id}><div className="summary-card-top"><span>{c.group.toUpperCase()}</span><span>{winner?'01':'—'}</span></div><b>{c.name}</b><div className="summary-winner">{winner?<>{c.id==='director'&&winner.directors?.length?<><div className="director-summary">{winner.directors.map(director=><div key={director.id}>{director.profile_path?<img src={IMAGE+'w92'+director.profile_path} alt={director.name}/>:<Film size={14}/>}<span>{director.name}</span></div>)}</div><div><strong>{winner.title}</strong><small>{winner.year||'Director prediction'}</small></div></>:c.id==='score'&&winner.composers?.length?<><div className="director-summary">{winner.composers.map(composer=><div key={composer.id}>{composer.profile_path?<img src={IMAGE+'w92'+composer.profile_path} alt={composer.name}/>:<Film size={14}/>}<span>{composer.name}</span></div>)}</div><div><strong>{winner.title}</strong><small>{winner.knownFor||winner.year||'Composer prediction'}</small></div></>:<><div className="mini-image">{(c.id==='original-screenplay'||c.id==='adapted-screenplay'||c.id==='score')&&winner.creditImage?<img src={IMAGE+'w92'+winner.creditImage} alt={winner.knownFor||winner.title}/>:winner.movieImage||winner.image?<img src={IMAGE+'w92'+(winner.movieImage||winner.image)} alt=""/>:<Film size={16}/>}</div><div><strong>{winner.title}</strong><small>{nomineeLabel}</small></div></>}<Trophy className="mini-trophy" size={16}/></>:<span className="not-selected">No prediction yet</span>}</div></div>})}</div>
           <div className="export-note"><Award size={19}/><div><b>Your ballot is ready for the ceremony.</b><span>Download a JPG or PNG, or copy the complete list to share it.</span></div></div>
         </>}</section>
       </div>

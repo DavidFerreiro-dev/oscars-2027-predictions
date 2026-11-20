@@ -383,9 +383,23 @@ function App(){
       ctx.fillStyle=winner?'#f4efe5':'#777064'
       ctx.font=winner?'700 30px Georgia':'24px Arial'
       ctx.textAlign='right'
-      const detail=winner?(c.id==='director'&&winner.movieName?winner.movieName:c.id==='score'||c.id==='original-screenplay'||c.id==='adapted-screenplay'?winner.title:winner.title):'No prediction'
+      const detail=winner?(c.id==='director'
+        ?(winner.directors?.map(director=>director.name).filter(Boolean).join(' · ')||winner.knownFor||'Director desconocido')
+        :winner.title):'No prediction'
       ctx.fillText(detail,width-95,y+61)
       ctx.textAlign='left'
+      if(winner && ACTING_CATEGORY_IDS.has(c.id)){
+        const associatedMovie=winner.movie
+          ?winner.movie.replace(/\s\(\d{4}\)$/,'')
+          :winner.movieName||winner.year||''
+        if(associatedMovie){
+          ctx.fillStyle='#c9b77f'
+          ctx.font='20px Arial'
+          ctx.textAlign='right'
+          ctx.fillText(associatedMovie,width-95,y+92)
+          ctx.textAlign='left'
+        }
+      }
     })
     ctx.fillStyle='#777064'
     ctx.font='16px Arial'

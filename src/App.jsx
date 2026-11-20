@@ -342,7 +342,9 @@ function App(){
       const category=selected[index]
       const isScreenplay=category?.id==='original-screenplay'||category?.id==='adapted-screenplay'
       const isScore=category?.id==='score'
-      return loadPoster(isScreenplay||isScore?(winner?.creditImage||winner?.movieImage||winner?.image):(winner?.movieImage||winner?.image))
+      const isDirector=category?.id==='director'
+      const primaryPerson=isDirector?winner?.directors?.[0]?.profile_path:isScore?winner?.composers?.[0]?.profile_path:winner?.creditImage
+      return loadPoster(primaryPerson||(isScreenplay||isScore||isDirector?(winner?.movieImage||winner?.image):(winner?.movieImage||winner?.image)))
     }))
     const height=230+(selected.length*rowHeight)
     canvas.width=width
@@ -438,7 +440,9 @@ function App(){
                     ?<img src={IMAGE+'w185'+item.creditImage} alt={item.knownFor||item.title}/>
                     :((item.type==='person'&&item.movieImage)||item.image?<img src={IMAGE+'w185'+((item.type==='person'&&item.movieImage)||item.image)} alt=""/>:<div className="poster-placeholder"><Film size={22}/></div>)}
                 </div>
-                {(active==='original-screenplay'||active==='adapted-screenplay'||active==='score')&&item.creditImage
+                {(active==='original-screenplay'||active==='adapted-screenplay')&&(item.movieImage||item.image)
+                  ?<div className="person-thumb"><img src={IMAGE+'w92'+(item.movieImage||item.image)} alt={item.title}/></div>
+                  :active==='score'&&item.creditImage
                   ?<div className="person-thumb"><img src={IMAGE+'w92'+item.creditImage} alt={item.knownFor||item.title}/></div>
                   :(((item.type==='person'&&item.movieImage&&item.image)||item.creditImage)&&<div className="person-thumb"><img src={IMAGE+'w92'+(item.type==='person'&&item.movieImage?item.image:item.creditImage)} alt=""/></div>)}
                 </div>

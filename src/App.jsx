@@ -328,25 +328,18 @@ function App(){
     image.crossOrigin='anonymous'
     image.onload=()=>resolve(image)
     image.onerror=()=>resolve(null)
-    image.src=IMAGE+'w185'+path
+    image.src=IMAGE+'w342'+path
   })
   const exportImage=async(format)=>{
     if(exporting)return
     setExporting(true)
     const canvas=document.createElement('canvas')
-    const width=1200
+    const width=1600
     const selected=CATEGORIES.filter(c=>!mainOnly||c.group==='Major')
-    const rowHeight=104
+    const rowHeight=150
     const winners=selected.map(c=>predictions[c.id]?.[0]||null)
-    const posters=await Promise.all(winners.map((winner,index)=>{
-      const category=selected[index]
-      const isScreenplay=category?.id==='original-screenplay'||category?.id==='adapted-screenplay'
-      const isScore=category?.id==='score'
-      const isDirector=category?.id==='director'
-      const primaryPerson=isDirector?winner?.directors?.[0]?.profile_path:isScore?winner?.composers?.[0]?.profile_path:winner?.creditImage
-      return loadPoster(primaryPerson||(isScreenplay||isScore||isDirector?(winner?.movieImage||winner?.image):(winner?.movieImage||winner?.image)))
-    }))
-    const height=230+(selected.length*rowHeight)
+    const posters=await Promise.all(winners.map(winner=>loadPoster(winner?.movieImage||winner?.image)))
+    const height=280+(selected.length*rowHeight)
     canvas.width=width
     canvas.height=height
     const ctx=canvas.getContext('2d')
@@ -363,20 +356,34 @@ function App(){
     ctx.fillStyle='#777064'
     ctx.font='18px Arial'
     ctx.fillText(mainOnly?'Major categories only':'All categories',72,180)
+    ctx.fillStyle='#4b4025'
+    ctx.fillRect(72,205,width-144,2)
     selected.forEach((c,index)=>{
-      const y=210+(index*rowHeight)
+      const y=220+(index*rowHeight)
       const winner=predictions[c.id]?.[0]
       ctx.fillStyle=index%2===0?'#171612':'#13130f'
-      ctx.fillRect(70,y,width-140,rowHeight-10)
+      ctx.fillRect(72,y,width-144,rowHeight-12)
       const poster=posters[index]
-      if(poster)ctx.drawImage(poster,95,y+13,48,74)
+      if(poster){
+        ctx.fillStyle='#29251d'
+        ctx.fillRect(92,y+15,82,124)
+        ctx.drawImage(poster,92,y+15,82,124)
+      }else{
+        ctx.fillStyle='#29251d'
+        ctx.fillRect(92,y+15,82,124)
+        ctx.fillStyle='#777064'
+        ctx.font='28px Arial'
+        ctx.textAlign='center'
+        ctx.fillText('FILM',133,y+82)
+        ctx.textAlign='left'
+      }
       ctx.fillStyle='#c5a448'
-      ctx.font='700 16px Arial'
-      ctx.fillText(c.name.toUpperCase(),165,y+32)
+      ctx.font='700 18px Arial'
+      ctx.fillText(c.name.toUpperCase(),198,y+38)
       ctx.fillStyle=winner?'#f4efe5':'#777064'
-      ctx.font=winner?'600 22px Georgia':'18px Arial'
+      ctx.font=winner?'700 30px Georgia':'24px Arial'
       ctx.textAlign='right'
-      const detail=winner?(c.id==='director'&&winner.directors?.length?`${winner.title} — ${winner.directors.map(director=>director.name).join(', ')}`:c.id==='score'&&winner.composers?.length?`${winner.title} — ${winner.composers.map(composer=>composer.name).join(', ')}`:winner.subtitle||(winner.movie&&winner.role?`${winner.title} — ${winner.movie}, as ${winner.role}`:winner.movie?`${winner.title} — ${winner.movie}`:winner.knownFor?`${winner.title} — ${winner.knownFor}`:winner.title+(winner.year?` (${winner.year})`:''))):'No prediction'
+      const detail=winner?(c.id==='director'&&winner.movieName?winner.movieName:c.id==='score'||c.id==='original-screenplay'||c.id==='adapted-screenplay'?winner.title:winner.title):'No prediction'
       ctx.fillText(detail,width-95,y+61)
       ctx.textAlign='left'
     })

@@ -34,9 +34,28 @@ const CRAFT_CREDIT_JOBS = {
   picture: []
 }
 const readToken = () => TMDB_ACCESS_TOKEN || ''
+const normalizeSavedPredictions = saved => {
+  const next = {...blank,...saved}
+  ;['original-screenplay','adapted-screenplay'].forEach(id=>{
+    const grouped = new Map()
+    const standalone = []
+    ;(next[id]||[]).forEach(entry=>{
+      if(!entry.movie){standalone.push(entry);return}
+      const current=grouped.get(entry.movie)
+      if(current){
+        current.knownFor=[current.knownFor,entry.title].filter(Boolean).join(', ')
+        return
+      }
+      const match=entry.movie.match(/^(.*) \((\d{4})\)$/)
+      grouped.set(entry.movie,{...entry,type:'movie',title:match?match[1]:entry.movie,year:match?match[2]:'',image:entry.movieImage||null,movie:null,knownFor:entry.title||entry.knownFor||''})
+    })
+    next[id]=[...standalone,...grouped.values()].slice(0,CATEGORIES.find(c=>c.id===id).limit)
+  })
+  return next
+}
 
 function App(){
-  const [predictions,setPredictions] = useState(() => { try { return {...blank,...JSON.parse(localStorage.getItem('oscars27-predictions') || '{}')} } catch { return blank } })
+  const [predictions,setPredictions] = useState(() => { try { return normalizeSavedPredictions(JSON.parse(localStorage.getItem('oscars27-predictions') || '{}')) } catch { return blank } })
   const [active,setActive] = useState(CATEGORIES[0].id)
   const [tab,setTab] = useState('categories')
   const [query,setQuery] = useState('')
@@ -52,6 +71,7 @@ function App(){
   const [movieResults,setMovieResults] = useState([])
   const [movieLoading,setMovieLoading] = useState(false)
   const [roleLoading,setRoleLoading] = useState(null)
+  const [exporting,setExporting]=useState(false)
   const category = CATEGORIES.find(c=>c.id===active)
   const total = Object.values(predictions).reduce((n,a)=>n+a.length,0)
   const filled = CATEGORIES.filter(c=>predictions[c.id]?.length).length
@@ -107,22 +127,15 @@ function App(){
           const data=await res.json()
           const jobs=CRAFT_CREDIT_JOBS[active]
           const credits=(data.crew||[]).filter(person=>jobs.includes(person.job))
-          const movieLabel=year?`${title} (${year})`:title
           setPredictions(prev=>{
             const existing=prev[active]||[]
             const existingIds=new Set(existing.map(person=>person.id))
-            const people=credits.filter(person=>!existingIds.has(person.id)).slice(0,category.limit-existing.length).map(person=>({
-              id:person.id,
-              type:'person',
-              title:person.name,
-              year:'',
-              image:person.profile_path||null,
-              knownFor:person.job||'',
-              movie:movieLabel,
-              role:''
-            }))
-            if(people.length>0)return {...prev,[active]:[...existing,...people]}
-            return {...prev,[active]:[...existing,{id:item.id,type:'movie',title,year,image:item.poster_path,knownFor:'',movie:null,role:''}]}
+            if(existingIds.has(item.id)||existing.length>=category.limit)return prev
+            const contributors=credits
+              .map(person=>person.name)
+              .filter((name,index,names)=>name&&names.indexOf(name)===index)
+              .join(', ')
+            return {...prev,[active]:[...existing,{id:item.id,type:'movie',title,year,image:item.poster_path,knownFor:contributors,movie:null,role:''}]}
           })
           return
         }
@@ -141,7 +154,7 @@ function App(){
     const title=movie.title||movie.original_title
     const year=movie.release_date?(movie.release_date.slice(0,4)):''
     const movieLabel=year?`${title} (${year})`:title
-    setPredictions(p=>({...p,[active]:p[active].map(x=>x.id===id?{...x,movie:movieLabel,role:''}:x)}))
+    setPredictions(p=>({...p,[active]:p[active].map(x=>x.id===id?{...x,movie:movieLabel,movieImage:movie.poster_path||null,role:''}:x)}))
     setMovieSearchFor(null)
     setMovieQuery('')
     if(active==='director'){
@@ -194,11 +207,23 @@ function App(){
   }
   const setRole=(id,role)=>setPredictions(p=>({...p,[active]:p[active].map(x=>x.id===id?{...x,role}:x)}))
   const reorder=(from,to)=>{if(from===null||from===to)return;setPredictions(p=>{const arr=[...p[active]];const [item]=arr.splice(from,1);arr.splice(to,0,item);return {...p,[active]:arr}});setDragged(null)}
-  const exportImage=(format)=>{
+  const loadPoster=(path)=>new Promise(resolve=>{
+    if(!path){resolve(null);return}
+    const image=new Image()
+    image.crossOrigin='anonymous'
+    image.onload=()=>resolve(image)
+    image.onerror=()=>resolve(null)
+    image.src=IMAGE+'w185'+path
+  })
+  const exportImage=async(format)=>{
+    if(exporting)return
+    setExporting(true)
     const canvas=document.createElement('canvas')
     const width=1200
     const selected=CATEGORIES.filter(c=>!mainOnly||c.group==='Major')
-    const rowHeight=72
+    const rowHeight=104
+    const winners=selected.map(c=>predictions[c.id]?.[0]||null)
+    const posters=await Promise.all(winners.map(winner=>loadPoster(winner?.movieImage||winner?.image)))
     const height=230+(selected.length*rowHeight)
     canvas.width=width
     canvas.height=height
@@ -221,13 +246,16 @@ function App(){
       const winner=predictions[c.id]?.[0]
       ctx.fillStyle=index%2===0?'#171612':'#13130f'
       ctx.fillRect(70,y,width-140,rowHeight-10)
+      const poster=posters[index]
+      if(poster)ctx.drawImage(poster,95,y+13,48,74)
       ctx.fillStyle='#c5a448'
       ctx.font='700 16px Arial'
-      ctx.fillText(c.name.toUpperCase(),95,y+33)
+      ctx.fillText(c.name.toUpperCase(),165,y+32)
       ctx.fillStyle=winner?'#f4efe5':'#777064'
       ctx.font=winner?'600 22px Georgia':'18px Arial'
       ctx.textAlign='right'
-      ctx.fillText(winner?(winner.movie&&winner.role?`${winner.title} — ${winner.movie}, as ${winner.role}`:winner.movie?`${winner.title} — ${winner.movie}`:winner.title+(winner.year?` (${winner.year})`:'')):'No prediction',width-95,y+35)
+      const detail=winner?(winner.movie&&winner.role?`${winner.title} — ${winner.movie}, as ${winner.role}`:winner.movie?`${winner.title} — ${winner.movie}`:winner.knownFor?`${winner.title} — ${winner.knownFor}`:winner.title+(winner.year?` (${winner.year})`:'')):'No prediction'
+      ctx.fillText(detail,width-95,y+61)
       ctx.textAlign='left'
     })
     ctx.fillStyle='#777064'
@@ -238,6 +266,7 @@ function App(){
     link.download=`oscars-2027-predictions.${format}`
     link.href=canvas.toDataURL(mime,0.94)
     link.click()
+    setExporting(false)
   }
   const summary=useMemo(()=>CATEGORIES.map(c=>{const winner=predictions[c.id]?.[0];const detail=winner?(winner.movie&&winner.role?`${winner.title} — ${winner.movie}, as ${winner.role}`:winner.movie?`${winner.title} — ${winner.movie}`:winner.role?`${winner.title} — as ${winner.role}`:winner.title+(winner.year?` (${winner.year})`:'')):'—';return `${c.name}: ${detail}`}).join('\n'),[predictions])
   const copySummary=async()=>{await navigator.clipboard.writeText(`MY PREDICTIONS · OSCARS 2027\n\n${summary}`);alert('Summary copied to the clipboard.')}
@@ -288,7 +317,7 @@ function App(){
                 </div>
                 <div className="nominee-details">
                   <b>{item.title}</b>
-                  <span>{item.type==='person'&&item.movie?`In ${item.movie}${item.knownFor?` · ${item.knownFor}`:''}`:item.year||item.knownFor||'No additional information'}</span>
+                  <span>{item.type==='person'&&item.movie?`In ${item.movie}${item.knownFor?` · ${item.knownFor}`:''}`:item.knownFor?`${item.year?`${item.year} · `:''}${item.knownFor}`:(item.year||'No additional information')}</span>
                   {item.type==='person' && (ACTING_CATEGORY_IDS.has(active)||active==='director') && (
                     <div className="person-selection">
                       <button
@@ -343,8 +372,8 @@ function App(){
           <div className="category-footer"><span><Sparkles size={14}/> {category.limit-predictions[active].length} slots available</span><div className="category-arrows"><button disabled={CATEGORIES.findIndex(c=>c.id===active)===0} onClick={()=>setActive(CATEGORIES[CATEGORIES.findIndex(c=>c.id===active)-1].id)}>Previous</button><button disabled={CATEGORIES.findIndex(c=>c.id===active)===CATEGORIES.length-1} onClick={()=>setActive(CATEGORIES[CATEGORIES.findIndex(c=>c.id===active)+1].id)}>Next category <ChevronDown size={14}/></button></div></div>
         </>:<>
           <div className="section-top summary-top"><div><div className="eyebrow">YOUR OSCAR NIGHT</div><h2>My predictions <em>2027</em></h2><p className="section-desc">Your picks for the 99th Academy Awards.</p></div><div className="limit-pill">{filled} <span>/ 14</span></div></div>
-          <div className="export-options"><label className="category-toggle"><input type="checkbox" checked={mainOnly} onChange={e=>setMainOnly(e.target.checked)}/><span>Major categories only</span></label><div className="summary-actions"><button className="gold-button" onClick={()=>exportImage('jpg')}><Download size={16}/> Download JPG</button><button className="outline-button" onClick={()=>exportImage('png')}><Download size={16}/> Download PNG</button><button className="outline-button" onClick={copySummary}><Copy size={16}/> Copy list</button></div></div>
-          <div className="summary-grid">{CATEGORIES.filter(c=>!mainOnly||c.group==='Major').map(c=>{const winner=predictions[c.id]?.[0];const nomineeLabel=winner?(winner.movie&&winner.role?`In ${winner.movie} as ${winner.role}`:winner.movie?`In ${winner.movie}`:winner.role?`as ${winner.role}`:winner.year||winner.knownFor||'Winner prediction'):'No prediction yet';return <div className="summary-card" key={c.id}><div className="summary-card-top"><span>{c.group.toUpperCase()}</span><span>{winner?'01':'—'}</span></div><b>{c.name}</b><div className="summary-winner">{winner?<><div className="mini-image">{winner.image?<img src={IMAGE+'w92'+winner.image} alt=""/>:<Film size={16}/>}</div><div><strong>{winner.title}</strong><small>{nomineeLabel}</small></div><Trophy className="mini-trophy" size={16}/></>:<span className="not-selected">No prediction yet</span>}</div></div>})}</div>
+          <div className="export-options"><label className="category-toggle"><input type="checkbox" checked={mainOnly} onChange={e=>setMainOnly(e.target.checked)}/><span>Major categories only</span></label><div className="summary-actions"><button className="gold-button" disabled={exporting} onClick={()=>exportImage('jpg')}><Download size={16}/> {exporting?'Preparing...':'Download JPG'}</button><button className="outline-button" disabled={exporting} onClick={()=>exportImage('png')}><Download size={16}/> Download PNG</button><button className="outline-button" onClick={copySummary}><Copy size={16}/> Copy list</button></div></div>
+          <div className="summary-grid">{CATEGORIES.filter(c=>!mainOnly||c.group==='Major').map(c=>{const winner=predictions[c.id]?.[0];const nomineeLabel=winner?(winner.movie&&winner.role?`In ${winner.movie} as ${winner.role}`:winner.movie?`In ${winner.movie}`:winner.role?`as ${winner.role}`:winner.knownFor||winner.year||'Winner prediction'):'No prediction yet';return <div className="summary-card" key={c.id}><div className="summary-card-top"><span>{c.group.toUpperCase()}</span><span>{winner?'01':'—'}</span></div><b>{c.name}</b><div className="summary-winner">{winner?<><div className="mini-image">{winner.movieImage||winner.image?<img src={IMAGE+'w92'+(winner.movieImage||winner.image)} alt=""/>:<Film size={16}/>}</div><div><strong>{winner.title}</strong><small>{nomineeLabel}</small></div><Trophy className="mini-trophy" size={16}/></>:<span className="not-selected">No prediction yet</span>}</div></div>})}</div>
           <div className="export-note"><Award size={19}/><div><b>Your ballot is ready for the ceremony.</b><span>Download a JPG or PNG, or copy the complete list to share it.</span></div></div>
         </>}</section>
       </div>
